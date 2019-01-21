@@ -6,9 +6,9 @@ Backup mysql/mariadb databases with optional on the fly *encryption*.
 
 - latest, 8
 - 5, 5.7
-- alpine, 5-alpine, 5.7-alpine
+- alpine
 
-**NOTICE**: alpine and 5 images do not support mysql 8
+**NOTICE**: tags 5, 5.7, alpine do not support mysql 8 and tags latest, 8 do not support mysql 5 and mariadb.
 
 ## Environment Variables
 
