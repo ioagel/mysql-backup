@@ -16,8 +16,8 @@
 #   * Required commands:
 #       + mysqldump
 #       + mysql
-#       + bzip2 or gzip     # If bzip2 is not available, change 'CMD_COMPRESS'
-#                           # to use 'gzip'.
+#       + bzip2 or gzip or xz  # if COMPRESS=YES and/or ENC=YES
+#       + openssl # if ENC=YES
 #
 
 ###########################
@@ -25,9 +25,9 @@
 ###########################
 #   * Set correct values for below variables:
 #
+#       MYSQL_HOST             REQUIRED
 #       MYSQL_PASSWD[_FILE]    REQUIRED
 #       BACKUP_ROOTDIR         default=/backup
-#       MYSQL_HOST             default=localhost
 #       MYSQL_PORT             default=3306
 #       MYSQL_PROTO            default=TCP
 #       MYSQL_USER             default=root
@@ -39,12 +39,15 @@
 #       DELETE_PLAIN_SQL_FILE  default=YES
 #       RUN_FREQ               default=ONCE
 #       SLEEP                  default=3600 -> 1 hour
+#       ENC                    default=NO
+#       CERT_LOC               default=/run/secrets/mysql_backup_enc_cert
 #
 #
 # Backup script suitable to run as a command in a mysql docker container
 # to backup databases running in production mysql containers or services.
 # It is optimized for docker thats why ENV vars are preferred
 # instead of commandline args.
+# SUPPORTS Encryption of backups: just use ENV=YES and mount the certificate to default or other dir inside the container
 #
 # Create a dockerfile with a mysql base image and copy this script and use it as the COMMAND, then build and run:
 # Better use: floulab/mysql-backup from dockerhub.
@@ -66,7 +69,7 @@
 # Where to store backup copies.
 BACKUP_ROOTDIR=${BACKUP_ROOTDIR:-/backup} # for docker, mount a volume here
 
-MYSQL_HOST=${MYSQL_HOST:-localhost}
+MYSQL_HOST=$MYSQL_HOST
 MYSQL_PORT=${MYSQL_PORT:-3306}
 MYSQL_PROTO=${MYSQL_PROTO:-TCP} # either TCP or SOCKET
 MYSQL_USER=${MYSQL_USER:-root}
@@ -83,9 +86,10 @@ DATABASES=${DATABASES:---all-databases}
 DB_CHARACTER_SET=${DB_CHARACTER_SET:-utf8}
 
 # Compress plain SQL file: YES, NO.
+# If Encryption is chosen then this var is not considered, the file will be compressed and encrypted!
 COMPRESS=${COMPRESS:-YES}
 
-# Compression program: bzip2, gzip
+# Compression program: bzip2, gzip, xz
 CMD_COMPRESS=${CMD_COMPRESS:-bzip2 -9}
 
 # Delete plain SQL files after compressed. Compressed copy will be remained.
@@ -96,6 +100,10 @@ RUN_FREQ=${RUN_FREQ:-ONCE}
 
 # if NONSTOP use sleep for infinite loop: time in seconds
 SLEEP=${SLEEP:-3600}
+
+# Encryption: YES or NO
+ENC=${ENC:-NO}
+CERT_LOC=${CERT_LOC:-/run/secrets/mysql_backup_enc_cert} #docker swarm magic
 
 #########################################################
 # You do *NOT* need to modify below lines.
@@ -139,25 +147,41 @@ CMD_DU='du -sh'
 CMD_MYSQLDUMP='mysqldump'
 CMD_MYSQL='mysql'
 
-# Verify compress program is either bzip2 or gzip
-if [[ ! "$CMD_COMPRESS" =~ ^bzip2.*|^gzip.* ]]; then
-    echo "[ERROR] Compression ENV CMD_COMPRESS can either be 'bzip2' or 'gzip'." 1>&2
-    exit 255
-fi
-
 # Verify MYSQL_HOST is set
 if [ -z "$MYSQL_HOST" ]; then
-    echo "[ERROR] MySQL Host ENV variable MYSQL_HOST is required." 1>&2
-
+    echo "[ERROR] Environment variable MYSQL_HOST is required." 1>&2
     exit 255
 fi
 
 file_env 'MYSQL_PASSWD'
 # Verify MYSQL_HOST is set
 if [ -z "$MYSQL_PASSWD" ]; then
-    echo "[ERROR] MySQL Password ENV variable MYSQL_PASSWD is required." 1>&2
-
+    echo "[ERROR] Environment variable MYSQL_PASSWD is required." 1>&2
     exit 255
+fi
+
+# Verify compress program is either bzip2 or gzip or xz
+if [[ ! "$CMD_COMPRESS" =~ ^bzip2.*|^gzip.*|^xz.* ]]; then
+    echo "[ERROR] Environment variable CMD_COMPRESS can either be 'bzip2', 'gzip' or 'xz' with/without options like 'bzip2 -9'." 1>&2
+    exit 255
+fi
+
+# VERIFY ENC is either YES or NO
+if [[ ! "$ENC" =~ ^YES$|^NO$ ]]; then
+    echo "[ERROR] Environment variable ENC can be either YES or NO." 1>&2
+    exit 255
+fi
+
+# Verify openssl program is available if we are encrypting
+if [ "$ENC" = "YES" ]; then
+    if [ ! "$(openssl version 2>/dev/null)" ]; then
+        echo "[ERROR] For Encryption 'openssl' program is required." 1>&2
+        exit 255
+    fi
+    if [ ! -f "$CERT_LOC" ]; then
+        echo -e "[ERROR] For encryption you need to mount the certificate in: $CERT_LOC \nor your own location using the Environment variable CERT_LOC." 1>&2
+        exit 255
+    fi
 fi
 
 # Verify MySQL connection.
@@ -165,14 +189,11 @@ ${CMD_MYSQL} -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --
 if [ X"$?" != X"0" ]; then
     echo "[ERROR] MySQL username or password or host or protocol is incorrect in file ${0}." 1>&2
     echo "Please fix them first." 1>&2
-
     exit 255
 fi
 
 backup_db()
 {
-    # USAGE:
-    #  # backup dbname
     db="${1}"
 
     if [ "$db" = "--all-databases" ]; then
@@ -184,23 +205,43 @@ backup_db()
     fi
 
     if [ X"$?" == X'0' ]; then
-        # Dump
-        ${CMD_MYSQLDUMP} \
-            -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" \
-            --default-character-set="$DB_CHARACTER_SET" \
-            --triggers \
-            --routines \
-            --events \
-            --single-transaction="$MYSQL_SINGLE_TX" \
-            "$db" > "$output_sql" 2>/dev/null
 
-        # Compress
-        if [ X"${COMPRESS}" == X"YES" ]; then
-            ${CMD_COMPRESS} "${output_sql}" >> "${LOGFILE}"
+        if [ "$ENC" = 'NO' ]; then
+            ${CMD_MYSQLDUMP} \
+                -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" \
+                --default-character-set="$DB_CHARACTER_SET" \
+                --triggers \
+                --routines \
+                --events \
+                --single-transaction="$MYSQL_SINGLE_TX" \
+                "$db" > "$output_sql" 2>/dev/null
 
-            if [ X"$?" == X'0' ] && [ X"${DELETE_PLAIN_SQL_FILE}" == X'YES' ]; then
-                rm -f "${output_sql}" >> "${LOGFILE}"
+            # Compress
+            if [ X"${COMPRESS}" == X"YES" ]; then
+                ${CMD_COMPRESS} "${output_sql}" >> "${LOGFILE}"
+
+                if [ X"$?" == X'0' ] && [ X"${DELETE_PLAIN_SQL_FILE}" == X'YES' ]; then
+                    rm -f "${output_sql}" >> "${LOGFILE}"
+                fi
             fi
+        else # we are encrypting
+            if [[ "$CMD_COMPRESS" =~ ^bzip2.* ]]; then
+                suffix='bz2'
+            elif [[ "$CMD_COMPRESS" =~ ^gzip.* ]]; then
+                suffix='gz'
+            else
+                suffix='xz'
+            fi
+
+            ${CMD_MYSQLDUMP} \
+                -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" \
+                --default-character-set="$DB_CHARACTER_SET" \
+                --triggers \
+                --routines \
+                --events \
+                --single-transaction="$MYSQL_SINGLE_TX" \
+                "$db" 2>/dev/null | $CMD_COMPRESS | \
+                openssl smime -encrypt -binary -aes-256-cbc -out "$output_sql"."$suffix".enc -outform DER "$CERT_LOC" >> "$LOGFILE"
         fi
     fi
 }
@@ -252,12 +293,6 @@ execute_backup() {
 
     echo "* Backup completed (Success? ${BACKUP_SUCCESS})." >> "${LOGFILE}"
 
-    # if [ X"${BACKUP_SUCCESS}" == X"YES" ]; then
-    #     echo "==> Backup completed successfully."
-    # else
-    #     echo -e "==> Backup completed with !!!ERRORS!!!.\n" 1>&2
-    # fi
-
     sed -n '5,$p' "$LOGFILE"
 }
 
@@ -272,7 +307,6 @@ elif [ "$RUN_FREQ" = "ONCE" ]; then
     execute_backup
 else
     echo "[ERROR] RUN_FREQ ENV can either be 'ONCE' or 'NONSTOP'." 1>&2
-
     exit 255
 fi
 
