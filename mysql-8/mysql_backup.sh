@@ -27,7 +27,7 @@
 #
 #       MYSQL_HOST             REQUIRED
 #       MYSQL_PASSWD[_FILE]    REQUIRED
-#       BACKUP_ROOTDIR         default=/backup
+#       BACKUP_ROOTDIR         default=/backup (if using the script in a docker container do not change this)
 #       MYSQL_PORT             default=3306
 #       MYSQL_PROTO            default=TCP
 #       MYSQL_USER             default=root

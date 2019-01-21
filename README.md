@@ -14,7 +14,6 @@ Backup mysql/mariadb databases with optional on the fly *encryption*.
 
 - **MYSQL_HOST**            ---   REQUIRED
 - **MYSQL_PASSWD[_FILE]**   ---   REQUIRED
-- **BACKUP_ROOTDIR**        ---   default=/backup
 - **MYSQL_PORT**            ---   default=3306
 - **MYSQL_PROTO**           ---   default=TCP [options=TCP, SOCKET]
 - **MYSQL_USER**            ---   default=root
