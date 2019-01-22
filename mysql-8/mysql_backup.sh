@@ -6,8 +6,8 @@
 # License:           This shell script is part of iRedMail project, released under
 #                    GPL v2.
 #
-# Modified By:       Ioannis Angelakopoulos <ioagel@gmail.com>
-# Date:              18/01/2019
+# Heavily Modified By:  Ioannis Angelakopoulos <ioagel@gmail.com>
+# Date:                 18/01/2019
 
 ###########################
 # REQUIREMENTS
@@ -26,43 +26,52 @@
 #   * Set correct values for below variables:
 #
 #       MYSQL_HOST             REQUIRED
-#       MYSQL_PASSWD[_FILE]    REQUIRED
-#       BACKUP_ROOTDIR         default=/backup (if using the script in a docker container do not change this)
-#       MYSQL_PORT             default=3306
-#       MYSQL_PROTO            default=TCP
-#       MYSQL_USER             default=root
-#       MYSQL_SINGLE_TX        default=TRUE
-#       DATABASES              default=all
-#       DB_CHARACTER_SET       default=utf8
-#       COMPRESS               default=YES
-#       CMD_COMPRESS           default=bzip2 -9
-#       DELETE_PLAIN_SQL_FILE  default=YES
-#       RUN_FREQ               default=ONCE
-#       SLEEP                  default=3600 -> 1 hour
-#       ENC                    default=NO
-#       CERT_LOC               default=/run/secrets/mysql_backup_enc_cert
+#       MYSQL_PASSWD[_FILE]    REQUIRED (supports docker SECRETS)
+#       BACKUP_ROOTDIR         default = /backup (if using the script in a docker container do not change this)
+#       MYSQL_PORT             default = 3306
+#       MYSQL_PROTO            default = TCP
+#       MYSQL_USER             default = root
+#       MYSQL_OPTIONS          default = --single-transaction
+#       DATABASES              default = all (or 'db1 db2 db3' multiple databases separated by SPACES)
+#       COMPRESS               default = YES
+#       CMD_COMPRESS           default = bzip2 -9
+#       DELETE_PLAIN_SQL_FILE  default = YES
+#       BACKUP_INTERVAL        default = 0 (run once and exit)
+#       ENC                    default = NO
+#       CERT_LOC               default = /run/secrets/mysql_backup_cert
 #
 #
 # Backup script suitable to run as a command in a mysql docker container
-# to backup databases running in production mysql containers or services.
+# to backup databases running in mysql/mariadb servers, containerized or not.
 # It is optimized for docker thats why ENV vars are preferred
 # instead of commandline args.
 # SUPPORTS Encryption of backups: just use ENV=YES and mount the certificate to default or other dir inside the container
 #
-# Create a dockerfile with a mysql base image and copy this script and use it as the COMMAND, then build and run:
-# Better use: floulab/mysql-backup from dockerhub.
-#
-# run once and exit
-# $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod floulab/mysql-backup
-#
+# To use it check:
+#     - DockerHub https://cloud.docker.com/repository/docker/ioagel/mysql-backup
+#     - Github https://github.com/ioagel/mysql-backup
+
+# EXAMPLES:
+
+# run once and exit - mysql-prod is the container running the db we want to backup
+# $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod ioagel/mysql-backup
+
 # run as a daemon and backup every 1 hour
-# $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e RUN_FREQ=NONSTOP -v db_backups:/backup floulab/mysql-backup
-#
-# SUPPORTS Docker Secrets with MYSQL_PASSWD_FILE environment variable!
+# $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=3600 -v db_backups:/backup ioagel/mysql-backup
+# or backup every 3h (10800 seconds)
+# $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=10800 -v db_backups:/backup ioagel/mysql-backup
+# or backup every 3h (only supported in LINUX)
+# $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=3h -v db_backups:/backup ioagel/mysql-backup
+
+# Encryption
+# $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e ENC=YES -v $PWD/cert.pem:/run/secrets/mysql_backup_cert -v db_backups:/backup ioagel/mysql-backup
+
+# backup remote docker container or standalone mysql/mariadb server
+# $ docker run --rm -e MYSQL_HOST=mysql.example.org -e MYSQL_PASSWD=password -v db_backups:/backup ioagel/mysql-backup
 #
 # run as a standalone script
 # $ MYSQL_PASSWD=password MYSQL_HOST=mysql.example.org bash mysql_backup.sh
-#
+
 #########################################################
 # Modify below variables to fit your need ----
 #########################################################
@@ -73,17 +82,14 @@ MYSQL_HOST=$MYSQL_HOST
 MYSQL_PORT=${MYSQL_PORT:-3306}
 MYSQL_PROTO=${MYSQL_PROTO:-TCP} # either TCP or SOCKET
 MYSQL_USER=${MYSQL_USER:-root}
-MYSQL_SINGLE_TX=${MYSQL_SINGLE_TX:-TRUE} # either TRUE or FALSE, --single-transaction option
+
+# You can override it and provide any option you need
+MYSQL_OPTIONS=${MYSQL_OPTIONS:---single-transaction}
 
 # Databases we should backup.
 # Multiple databases MUST be seperated by SPACE.
-# Your iRedMail server might have below databases:
-# mysql, roundcubemail, policyd (or postfixpolicyd), amavisd, iredadmin
+# eg. 'db1 db2 db3'
 DATABASES=${DATABASES:---all-databases}
-
-# Database character set for ALL databases.
-# Note: Currently, it doesn't support to specify character set for each databases.
-DB_CHARACTER_SET=${DB_CHARACTER_SET:-utf8}
 
 # Compress plain SQL file: YES, NO.
 # If Encryption is chosen then this var is not considered, the file will be compressed and encrypted!
@@ -95,15 +101,17 @@ CMD_COMPRESS=${CMD_COMPRESS:-bzip2 -9}
 # Delete plain SQL files after compressed. Compressed copy will be remained.
 DELETE_PLAIN_SQL_FILE=${DELETE_PLAIN_SQL_FILE:-YES}
 
-# Run once or infinite loop: ONCE, NONSTOP
-RUN_FREQ=${RUN_FREQ:-ONCE}
-
-# if NONSTOP use sleep for infinite loop: time in seconds
-SLEEP=${SLEEP:-3600}
+# Takes a NUMBER for time in seconds or
+# for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively.
+# Default value is 0 which means run once and exit.
+BACKUP_INTERVAL=${BACKUP_INTERVAL:-0}
 
 # Encryption: YES or NO
 ENC=${ENC:-NO}
-CERT_LOC=${CERT_LOC:-/run/secrets/mysql_backup_enc_cert} #docker swarm magic
+# x509 certificate file in pem format
+# Mount in container or use secrets with swarm.
+# Secrets are mounted by default under: /run/secrets dir.
+CERT_LOC=${CERT_LOC:-/run/secrets/mysql_backup_cert}
 
 #########################################################
 # You do *NOT* need to modify below lines.
@@ -122,21 +130,21 @@ trap cleanup SIGINT SIGTERM
 # (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
 #  "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
 file_env() {
-	  local var="$1"
-	  local fileVar="${var}_FILE"
-	  local def="${2:-}"
-	  if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
-		    echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
-		    exit 1
-	  fi
-	  local val="$def"
-	  if [ "${!var:-}" ]; then
-		    val="${!var}"
-	  elif [ "${!fileVar:-}" ]; then
-		    val="$(< "${!fileVar}")"
-	  fi
-	  export "$var"="$val"
-	  unset "$fileVar"
+    local var="$1"
+    local fileVar="${var}_FILE"
+    local def="${2:-}"
+    if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
+        echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
+        exit 1
+    fi
+    local val="$def"
+    if [ "${!var:-}" ]; then
+        val="${!var}"
+    elif [ "${!fileVar:-}" ]; then
+        val="$(< "${!fileVar}")"
+    fi
+    export "$var"="$val"
+    unset "$fileVar"
 }
 
 PATH='/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/sbin'
@@ -179,13 +187,16 @@ if [ "$ENC" = "YES" ]; then
         exit 255
     fi
     if [ ! -f "$CERT_LOC" ]; then
-        echo -e "[ERROR] For encryption you need to mount the certificate in: $CERT_LOC \nor your own location using the Environment variable CERT_LOC." 1>&2
+        echo "[ERROR] For encryption you need to mount the certificate in: $CERT_LOC" 1>&2
+        echo "[ERROR] or your own location using the Environment variable CERT_LOC." 1>&2
         exit 255
     fi
 fi
 
+CON_SETTINGS="-u $MYSQL_USER --password=$MYSQL_PASSWD --host=$MYSQL_HOST --port=$MYSQL_PORT --protocol=$MYSQL_PROTO"
+
 # Verify MySQL connection.
-${CMD_MYSQL} -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" -e "show databases" &>/dev/null
+${CMD_MYSQL} $CON_SETTINGS -e "show databases" &>/dev/null
 if [ X"$?" != X"0" ]; then
     echo "[ERROR] MySQL username or password or host or protocol is incorrect in file ${0}." 1>&2
     echo "Please fix them first." 1>&2
@@ -201,19 +212,15 @@ backup_db()
     else
         output_sql="${BACKUP_DIR}/${db}-${TIMESTAMP}.sql"
         # Check whether database exists or not
-        ${CMD_MYSQL} -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" -e "use ${db}" &>/dev/null
+        ${CMD_MYSQL} $CON_SETTINGS -e "use ${db}" &>/dev/null
     fi
 
     if [ X"$?" == X'0' ]; then
 
         if [ "$ENC" = 'NO' ]; then
             ${CMD_MYSQLDUMP} \
-                -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" \
-                --default-character-set="$DB_CHARACTER_SET" \
-                --triggers \
-                --routines \
-                --events \
-                --single-transaction="$MYSQL_SINGLE_TX" \
+                $CON_SETTINGS \
+                $MYSQL_OPTIONS \
                 "$db" > "$output_sql" 2>/dev/null
 
             # Compress
@@ -234,12 +241,8 @@ backup_db()
             fi
 
             ${CMD_MYSQLDUMP} \
-                -u "$MYSQL_USER" --password="$MYSQL_PASSWD" --host="$MYSQL_HOST" --port="$MYSQL_PORT" --protocol="$MYSQL_PROTO" \
-                --default-character-set="$DB_CHARACTER_SET" \
-                --triggers \
-                --routines \
-                --events \
-                --single-transaction="$MYSQL_SINGLE_TX" \
+                $CON_SETTINGS \
+                $MYSQL_OPTIONS \
                 "$db" 2>/dev/null | $CMD_COMPRESS | \
                 openssl smime -encrypt -binary -aes-256-cbc -out "$output_sql"."$suffix".enc -outform DER "$CERT_LOC" >> "$LOGFILE"
         fi
@@ -296,18 +299,27 @@ execute_backup() {
     sed -n '5,$p' "$LOGFILE"
 }
 
-if [ "$RUN_FREQ" = "NONSTOP" ]; then
+regex='^[0-9]+[s|m|h|d]{0,1}$'
+regex_unix='^[0-9]+$'
+
+backup_interval_format_error() {
+    echo "[ERROR] BACKUP_INTERVAL supports 0 for running the script once and exit (the default value)" 1>&2
+    echo "[ERROR] or a NUMBER for time in seconds or for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively." 1>&2
+    exit 255
+}
+
+if [ "$BACKUP_INTERVAL" = '0' ]; then
+    execute_backup
+elif [[ "$BACKUP_INTERVAL" =~ $regex ]]; then
+    [[ $(uname -s) != 'Linux' ]] && [[ ! "$BACKUP_INTERVAL" =~ $regex_unix ]] && backup_interval_format_error
     while true; do
         execute_backup
 
-        sleep "$SLEEP" &
+        sleep "$BACKUP_INTERVAL" &
         wait $!
     done
-elif [ "$RUN_FREQ" = "ONCE" ]; then
-    execute_backup
 else
-    echo "[ERROR] RUN_FREQ ENV can either be 'ONCE' or 'NONSTOP'." 1>&2
-    exit 255
+    backup_interval_format_error
 fi
 
 exit 0

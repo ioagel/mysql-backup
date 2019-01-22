@@ -12,25 +12,25 @@ Backup mysql/mariadb databases with optional on the fly *encryption*.
 
 ## Environment Variables
 
-- **MYSQL_HOST**            ---   REQUIRED
-- **MYSQL_PASSWD[_FILE]**   ---   REQUIRED
-- **MYSQL_PORT**            ---   default=3306
-- **MYSQL_PROTO**           ---   default=TCP [options=TCP, SOCKET]
-- **MYSQL_USER**            ---   default=root
-- **MYSQL_SINGLE_TX**       ---   default=TRUE [options=TRUE, FALSE]
-- **DATABASES**             ---   default=all [eg. 'db1 db2 db3' multiple databases separated by spaces]
-- **DB_CHARACTER_SET**      ---   default=utf8
-- **COMPRESS**              ---   default=YES [options=YES, NO]
-- **CMD_COMPRESS**          ---   default='bzip2 -9' [options=bzip2, gzip, xz]
-- **DELETE_PLAIN_SQL_FILE** ---   default=YES [options=YES, NO]
-- **RUN_FREQ**              ---   default=ONCE [options=ONCE, NONSTOP]
-- **SLEEP**                 ---   default=3600 [time in seconds]
-- **ENC**                   ---   default=NO [options=YES, NO]
-- **CERT_LOC**              ---   default=/run/secrets/mysql_backup_enc_cert
+Override them according to your requirements.
 
-Supports Docker Secrets with *MYSQL_PASSWD_FILE* environment variable!
+<pre>
+    <b>MYSQL_HOST</b>             # REQUIRED
+    <b>MYSQL_PASSWD[_FILE]</b>    # REQUIRED
+    <b>MYSQL_PORT</b>             # default = 3306
+    <b>MYSQL_PROTO</b>            # default = TCP [options=TCP, SOCKET]
+    <b>MYSQL_USER</b>             # default = root
+    <b>MYSQL_OPTIONS</b>          # default = '--single-transaction' (override it and provide any option you need)
+    <b>DATABASES</b>              # default = all [or 'db1 db2 db3' multiple databases separated by SPACES]
+    <b>COMPRESS</b>               # default = YES [options=YES, NO]
+    <b>CMD_COMPRESS</b>           # default = 'bzip2 -9' [options=bzip2, gzip, xz]
+    <b>DELETE_PLAIN_SQL_FILE</b>  # default = YES [options=YES, NO]
+    <b>BACKUP_INTERVAL</b>        # default = 0 [run once and exit]*
+    <b>ENC</b>                    # default = NO [options=YES, NO]
+    <b>CERT_LOC</b>               # default = /run/secrets/mysql_backup_cert
+</pre>
 
-**IMPORTANT**: Be mindful of clear text passwords
+\* *BACKUP_INTERVAL* takes NUMBER for time in seconds and for *Linux ONLY* supports NUMBER[s|m|h|d] for seconds, minutes, hours and days respecitvely.
 
 ## Required Commands
 
@@ -50,17 +50,17 @@ You can find a tutorial in this [gist](https://gist.github.com/ioagel/2432fabb8b
 ## Examples
 
     # run once and exit - mysql-prod is the container running the db we want to backup
-    $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod floulab/mysql-backup
+    $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod ioagel/mysql-backup
 
-    # run as a daemon and backup every 1 hour(default)
-    $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e RUN_FREQ=NONSTOP -v db_backups:/backup floulab/mysql-backup
-    # or backup every 3h
-    $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e RUN_FREQ=NONSTOP -e SLEEP=3h -v db_backups:/backup floulab/mysql-backup
+    # run as a daemon and backup every 1 hour
+    $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=3600 -v db_backups:/backup ioagel/mysql-backup
+    # or backup every 3h (10800 seconds)
+    $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=10800 -v db_backups:/backup ioagel/mysql-backup
+    # or backup every 3h (only supported in LINUX)
+    $ docker run -d --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e BACKUP_INTERVAL=3h -v db_backups:/backup ioagel/mysql-backup
 
     # Encryption
-    $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e ENC=YES -v $PWD/cert.pem:/run/secrets/mysql_backup_enc_cert -v db_backups:/backup floulab/mysql-backup
+    $ docker run --rm --link mysql-prod -e MYSQL_PASSWD=password -e MYSQL_HOST=mysql-prod -e ENC=YES -v $PWD/cert.pem:/run/secrets/mysql_backup_cert -v db_backups:/backup ioagel/mysql-backup
 
     # backup remote docker container or standalone mysql server
-    $ docker run --rm -e MYSQL_HOST=mysql.example.org -e MYSQL_PASSWD=password -v db_backups:/backup floulab/mysql-backup
-
-Supports docker swarm services, where you dont need the *--link* option and you can use docker secrets.
+    $ docker run --rm -e MYSQL_HOST=mysql.example.org -e MYSQL_PASSWD=password -v db_backups:/backup ioagel/mysql-backup
