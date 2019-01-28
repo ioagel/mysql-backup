@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 
-# Original Author:   Zhang Huangbin (zhb@iredmail.org)
-# Date:              16/09/2007
-# Purpose:           Backup specified mysql databases with command 'mysqldump'.
-# License:           This shell script is part of iRedMail project, released under
-#                    GPL v2.
-#
-# (only 5% of original code remains)
-# Modified By:  Ioannis Angelakopoulos <ioagel@gmail.com>
-# Date:         18/01/2019
+# Author:   Ioannis Angelakopoulos <ioagel@gmail.com>
+# Date:     18/01/2019
 
 ###########################
 # REQUIREMENTS
