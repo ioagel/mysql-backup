@@ -121,6 +121,8 @@ ENC=${ENC:-NO}
 # Mount in container or use secrets with swarm.
 # Secrets are mounted by default under: /run/secrets dir.
 CERT_LOC=${CERT_LOC:-/run/secrets/mysql_backup_cert}
+# Cipher
+CIPHER=${CIPHER:--aes-256-cbc}
 
 # Takes a NUMBER for time in seconds or
 # for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively.
@@ -273,7 +275,7 @@ backup_db()
             ${CON_SETTINGS} \
             ${MYSQL_OPTIONS} \
             "$db" 2>&1 | grep -v "${SUPPRESS_MYSQL_ERROR}" | ${CMD_COMPRESS} | \
-            openssl smime -encrypt -binary -aes-256-cbc -out "$output_sql"."$suffix".enc -outform DER "$CERT_LOC" >> ${LOGFILE}
+            openssl smime -encrypt -binary ${CIPHER} -out "$output_sql"."$suffix".enc -outform DER "$CERT_LOC" >> ${LOGFILE}
 
         if [[ "${PIPESTATUS[0]}" != '0' ]]; then
             echo "[ERROR] MYSQL_OPTIONS environment variable value: '${MYSQL_OPTIONS}' is INVALID!"

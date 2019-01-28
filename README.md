@@ -31,6 +31,7 @@ Override them according to your requirements.
     CRON_SCHEDULE          # default = 0 [run once and exit]* if you want to use CRON
 
     ENC                    # default = NO [options=YES, NO]
+    CIPHER                 # default = -aes-256-cbc
     CERT_LOC               # default = /run/secrets/mysql_backup_cert
 ```
 
