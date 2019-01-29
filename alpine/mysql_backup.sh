@@ -85,6 +85,9 @@
 # Where to store backup copies.
 BACKUP_ROOTDIR=${BACKUP_ROOTDIR:-/backup} # for docker, mount a volume here
 
+# if you want the name of the service in the name of the BACKUP_DIR
+SWARM_SERVICE=${SWARM_SERVICE}
+
 # Required
 MYSQL_HOST=${MYSQL_HOST}
 # This
@@ -297,7 +300,11 @@ execute_backup() {
     TIMESTAMP="${YEAR}.${MONTH}.${DAY}.${TIME}"
 
     # Define, check, create directories.
-    BACKUP_DIR="${BACKUP_ROOTDIR}/${MYSQL_HOST}/${YEAR}/${MONTH}/${DAY}"
+    if [[ -z ${SWARM_SERVICE} ]]; then
+        BACKUP_DIR="${BACKUP_ROOTDIR}/${MYSQL_HOST}/${YEAR}/${MONTH}/${DAY}"
+    else
+        BACKUP_DIR="${BACKUP_ROOTDIR}/${SWARM_SERVICE}_${MYSQL_HOST}/${YEAR}/${MONTH}/${DAY}"
+    fi
 
     # Log file
     LOGFILE="${BACKUP_DIR}/${TIMESTAMP}.log"

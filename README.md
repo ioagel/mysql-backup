@@ -16,7 +16,7 @@ Override them according to your requirements.
 
 ```
     BACKUP_ROOTDIR         # default = /backup
-    MYSQL_HOST             # REQUIRED
+    MYSQL_HOST             # REQUIRED [also used to name the backup dir eg. '/backup/$MYSQL_HOST']
     MYSQL_PASSWD[_FILE]    # REQUIRED
     MYSQL_PORT             # default = 3306
     MYSQL_PROTO            # default = TCP [options=TCP, SOCKET]
@@ -25,6 +25,7 @@ Override them according to your requirements.
     DATABASES              # default = all [or 'db1 db2 db3' multiple databases separated by SPACES]
     COMPRESS               # default = YES [options=YES, NO]
     CMD_COMPRESS           # default = 'bzip2 -9' [options=bzip2, gzip, xz]
+    SWARM_SERVICE          # default = unset [use this to prepend with an underscore, the service name, in the backup dir eg. '/backup/$SWARM_SERVICE_$MYSQL_HOST']
 
     SLEEP_SCHEDULE         # default = 0 [run once and exit] if you want to use SLEEP
           or
