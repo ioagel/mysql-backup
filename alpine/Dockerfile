@@ -2,8 +2,10 @@ FROM alpine:3.8
 
 MAINTAINER Ioannis Angelakopoulos<ioagel@gmail.com>
 
-RUN apk add --no-cache mysql-client bash xz openssl && \
+RUN apk add --no-cache mysql-client bash xz openssl msmtp ca-certificates && \
   mkdir /backup
+
+RUN update-ca-certificates
 
 COPY mysql_backup.sh start.sh /
 

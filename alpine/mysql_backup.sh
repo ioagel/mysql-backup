@@ -107,10 +107,6 @@ MYSQL_OPTIONS=${MYSQL_OPTIONS:---single-transaction}
 # eg. 'db1 db2 db3'
 DATABASES=${DATABASES:---all-databases}
 
-if [[ ${DATABASES} == 'all' ]]; then
-    DATABASES='--all-databases'
-fi
-
 # Compress plain SQL file: YES, NO.
 # If Encryption is chosen then this var is not considered, the file will be compressed and encrypted!
 COMPRESS=${COMPRESS:-YES}
@@ -148,6 +144,10 @@ CMD_MYSQL='mysql'
 
 # if we run inside docker
 DOCKER=${DOCKER:-NO}
+
+if [[ ${DATABASES} == 'all' ]]; then
+    DATABASES='--all-databases'
+fi
 
 # declare some vars we will use later
 LOGFILE=
@@ -236,6 +236,10 @@ if [[ "$?" != '0' ]]; then
     exit 255
 fi
 
+BACKUP_SUCCESS='YES'
+sleep_linux_regex='^[0-9]+[s|m|h|d]{0,1}$'
+sleep_unix_regex='^[0-9]+$'
+
 backup_db()
 {
     db="${1}"
@@ -288,9 +292,6 @@ backup_db()
     fi
 }
 
-# Pre-defined backup status
-BACKUP_SUCCESS='YES'
-
 execute_backup() {
     # Date.
     YEAR="$(${CMD_DATE} +%Y)"
@@ -313,8 +314,8 @@ execute_backup() {
     [[ ! -d "${BACKUP_DIR}" ]] && mkdir -p "${BACKUP_DIR}" 2>/dev/null
 
     # Initialize log file.
-    echo "=============================================================================" > "${LOGFILE}"
-    { echo "* Starting backup: ${TIMESTAMP}."; echo "* Backup directory: ${BACKUP_DIR}."; } >> "${LOGFILE}"
+    echo "==========================================================" > "${LOGFILE}"
+    { echo "* Starting backup: ${TIMESTAMP}"; echo "* Backup directory: ${BACKUP_DIR}"; } >> "${LOGFILE}"
 
 
     # Backup.
@@ -335,10 +336,29 @@ execute_backup() {
     done
 
     # Append file size of backup files.
-#    if [[ "$BACKUP_SUCCESS" == 'YES' ]]; then
-        { echo -e "* File size:\n----"; ${CMD_DU} "${BACKUP_DIR}"/*"${TIMESTAMP}"*sql*; echo "----"; } >> "${LOGFILE}"
-#    fi
+    { echo -e "* File size:\n----"; ${CMD_DU} "${BACKUP_DIR}"/*"${TIMESTAMP}"*sql*; echo "----"; } >> "${LOGFILE}"
+
     echo "* Backup completed (Success? ${BACKUP_SUCCESS})." >> "${LOGFILE}"
+}
+
+backup_interval_format_error() {
+    echo "[ERROR] SLEEP_SCHEDULE supports 0 for running the script once and exit (the default value)" 1>&2
+    echo "[ERROR] or a NUMBER for time in seconds or for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively." 1>&2
+    exit 255
+}
+
+send_mail() {
+    cp ${LOGFILE} /tmp/mail_file
+    MAIL_FILE=/tmp/mail_file
+    sed -i '1d;$d' ${MAIL_FILE}
+    sed -i "1s/^/To: ${MAILTO}\n/" ${MAIL_FILE}
+    sed -i "2s/^/Subject: Mysql Dump - HOST: ${MYSQL_HOST}\n/" ${MAIL_FILE}
+    sed -i "3s/^/*** Backup completed (Success? ${BACKUP_SUCCESS})\n/" ${MAIL_FILE}
+    sed -i "4s/^/***\n/" ${MAIL_FILE}
+    sed -i "5s/^/-----------DETAILED REPORT-----------\n/" ${MAIL_FILE}
+
+    cat ${MAIL_FILE} | msmtp -a default "${MAILTO}"
+    rm -f ${MAIL_FILE}
 }
 
 if [[ ${CRON_SCHEDULE} != '0' ]]; then
@@ -348,19 +368,11 @@ if [[ ${CRON_SCHEDULE} != '0' ]]; then
     fi
     execute_backup
     sed -n '5,$p' "$LOGFILE"
+    if [[ ! -z "${MAILTO}" ]]; then
+        send_mail
+    fi
     exit 0
 fi
-
-# From here and down the script is adapted to be used as a standalone using SLEEP
-# and not CRON jobs, as it is suitable for docker usage!
-regex='^[0-9]+[s|m|h|d]{0,1}$'
-regex_unix='^[0-9]+$'
-
-backup_interval_format_error() {
-    echo "[ERROR] SLEEP_SCHEDULE supports 0 for running the script once and exit (the default value)" 1>&2
-    echo "[ERROR] or a NUMBER for time in seconds or for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively." 1>&2
-    exit 255
-}
 
 if [[ "$SLEEP_SCHEDULE" == '0' ]]; then
     execute_backup
@@ -369,8 +381,8 @@ if [[ "$SLEEP_SCHEDULE" == '0' ]]; then
         echo "Override SLEEP_SCHEDULE environment variable if you want to run non-stop as a daemon" >> ${LOGFILE}
     fi
     sed -n '5,$p' "$LOGFILE"
-elif [[ "$SLEEP_SCHEDULE" =~ $regex ]]; then
-    [[ $(uname -s) != 'Linux' ]] && [[ ! "$SLEEP_SCHEDULE" =~ $regex_unix ]] && backup_interval_format_error
+elif [[ "$SLEEP_SCHEDULE" =~ $sleep_linux_regex ]]; then
+    [[ $(uname -s) != 'Linux' ]] && [[ ! "$SLEEP_SCHEDULE" =~ $sleep_unix_regex ]] && backup_interval_format_error
     while true; do
         execute_backup
         sed -n '5,$p' "$LOGFILE"
