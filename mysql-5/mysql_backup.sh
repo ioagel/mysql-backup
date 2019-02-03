@@ -86,7 +86,7 @@
 #########################################################
 # Modify below variables to fit your need ----
 #########################################################
-source /mysql-backup-env
+[[ -f "/mysql-backup-env" ]] && source /mysql-backup-env
 
 # Where to store backup copies.
 BACKUP_ROOTDIR=${BACKUP_ROOTDIR:-/backup} # for docker, mount a volume here
