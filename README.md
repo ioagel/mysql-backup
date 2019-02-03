@@ -35,14 +35,14 @@ Override them according to your requirements.
     CIPHER                 # default = -aes-256-cbc
     CERT_LOC               # default = /run/secrets/mysql_backup_cert
 
-   MAILTO                  # REQUIRED [for the mail functionality]
-   MSMTPRC                 # default = /etc/msmtprc [where msmtp gets the mail settings]
-   MSMTP_ACCOUNT_NAME      # default = sql-dump [account identity in msmtprc]
-   SMTP_HOST               # REQUIRED [eg. smtp.gmail.com]
-   SMTP_PORT               # REQUIRED [eg. 587]
-   SMTP_USER               # REQUIRED [eg. username@gmail.com]
-   SMTP_PASSWD[_FILE]      # REQUIRED [eg. plain-text-password]
-   MAILFROM                # REQUIRED [eg. username@gmail.com]
+    MAILTO                  # REQUIRED [for the mail functionality]
+    MSMTPRC                 # default = /etc/msmtprc [where msmtp gets the mail settings]
+    MSMTP_ACCOUNT_NAME      # default = sql-dump [account identity in msmtprc]
+    SMTP_HOST               # REQUIRED [eg. smtp.gmail.com]
+    SMTP_PORT               # REQUIRED [eg. 587]
+    SMTP_USER               # REQUIRED [eg. username@gmail.com]
+    SMTP_PASSWD[_FILE]      # REQUIRED [eg. plain-text-password]
+    MAILFROM                # REQUIRED [eg. username@gmail.com]
 ```
 
 \* For *CRON_SCHEDULE* use proper cron format like: '0 0 * * *' every day at 12:00am
