@@ -10,8 +10,9 @@
 #   * Required commands:
 #       + mysqldump
 #       + mysql
-#       + bzip2 or gzip or xz  # if COMPRESS=YES and/or ENC=YES
-#       + openssl # if ENC=YES
+#       + bzip2 or gzip or xz  # for compression
+#       + openssl # for encryption
+#       + msmtp # for mail functionality
 #
 
 ###########################
@@ -20,7 +21,7 @@
 #   * Set correct values for below variables:
 #
 #       MYSQL_HOST             REQUIRED
-#       MYSQL_PASSWD[_FILE]    REQUIRED (supports docker SECRETS)
+#       MYSQL_PASSWD           REQUIRED
 #       BACKUP_ROOTDIR         default = /backup (if using the script in a docker container do not change this)
 #       MYSQL_PORT             default = 3306
 #       MYSQL_PROTO            default = TCP
@@ -37,6 +38,9 @@
 #       ENC                    default = NO
 #       CERT_LOC               default = /run/secrets/mysql_backup_cert
 #
+#       MAILTO                 REQUIRED for the mail functionality
+#       MSMTPRC                default = /etc/msmtprc # where msmtp gets the mail settings
+#       MSMTP_ACCOUNT_NAME     default = sql-dump # account identity in msmtprc
 #
 # Backup script suitable to run as a command in a mysql docker container
 # to backup databases running in mysql/mariadb servers, containerized or not.
@@ -90,10 +94,7 @@ SWARM_SERVICE=${SWARM_SERVICE}
 
 # Required
 MYSQL_HOST=${MYSQL_HOST}
-# This
 MYSQL_PASSWD=${MYSQL_PASSWD}
-# OR
-MYSQL_PASSWD_FILE=${MYSQL_PASSWD_FILE}
 
 MYSQL_PORT=${MYSQL_PORT:-3306}
 MYSQL_PROTO=${MYSQL_PROTO:-TCP} # either TCP or SOCKET
@@ -106,10 +107,6 @@ MYSQL_OPTIONS=${MYSQL_OPTIONS:---single-transaction}
 # Multiple databases MUST be separated by SPACE.
 # eg. 'db1 db2 db3'
 DATABASES=${DATABASES:---all-databases}
-
-if [[ ${DATABASES} == 'all' ]]; then
-    DATABASES='--all-databases'
-fi
 
 # Compress plain SQL file: YES, NO.
 # If Encryption is chosen then this var is not considered, the file will be compressed and encrypted!
@@ -135,6 +132,26 @@ SLEEP_SCHEDULE=${SLEEP_SCHEDULE:-0}
 # Use Cron schedule like: '0 0 * * *' backup every day at 12am
 CRON_SCHEDULE=${CRON_SCHEDULE:-0}
 
+# MAIL Settings
+MAILTO=${MAILTO}
+MSMTPRC=${MSMTPRC:-/etc/msmtprc}
+MSMTP_ACCOUNT_NAME=${MSMTP_ACCOUNT_NAME:-sql-dump}
+####### example of msmtprc ########
+#   defaults
+#   auth           on
+#   tls            on
+#   tls_starttls   on
+#   tls_trust_file /etc/ssl/certs/ca-certificates.crt
+#   logfile        /var/log/msmtp.log
+#
+#   account  sql-dump [$MSMTP_ACCOUNT_NAME]
+#   host     smtp.example.org
+#   port     587
+#   from     admin@example.org
+#   user     admin@example.org
+#   password my_secure_password
+
+
 #########################################################
 # You do *NOT* need to modify below lines.
 #########################################################
@@ -145,9 +162,14 @@ CMD_DATE='/bin/date'
 CMD_DU='du -sh'
 CMD_MYSQLDUMP='mysqldump'
 CMD_MYSQL='mysql'
+CMD_MAIL='msmtp'
 
 # if we run inside docker
 DOCKER=${DOCKER:-NO}
+
+if [[ ${DATABASES} == 'all' ]]; then
+    DATABASES='--all-databases'
+fi
 
 # declare some vars we will use later
 LOGFILE=
@@ -162,37 +184,13 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-# thanks to mysql official image for the following func
-# usage: file_env VAR [DEFAULT]
-#    ie: file_env 'XYZ_DB_PASSWORD' 'example'
-# (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
-#  "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
-file_env() {
-    local var="$1"
-    local fileVar="${var}_FILE"
-    local def="${2:-}"
-    if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
-        echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
-        exit 1
-    fi
-    local val="$def"
-    if [ "${!var:-}" ]; then
-        val="${!var}"
-    elif [ "${!fileVar:-}" ]; then
-        val="$(< "${!fileVar}")"
-    fi
-    export "$var"="$val"
-    unset "$fileVar"
-}
-
 # Verify MYSQL_HOST is set
 if [[ -z "$MYSQL_HOST" ]]; then
     echo "[ERROR] Environment variable MYSQL_HOST is required." 1>&2
     exit 255
 fi
 
-file_env 'MYSQL_PASSWD'
-# Verify MYSQL_HOST is set
+# Verify MYSQL_PASSWD is set
 if [[ -z "$MYSQL_PASSWD" ]]; then
     echo "[ERROR] Environment variable MYSQL_PASSWD is required." 1>&2
     exit 255
@@ -235,6 +233,10 @@ if [[ "$?" != '0' ]]; then
     echo "Please fix them first." 1>&2
     exit 255
 fi
+
+BACKUP_SUCCESS='YES'
+sleep_linux_regex='^[0-9]+[s|m|h|d]{0,1}$'
+sleep_unix_regex='^[0-9]+$'
 
 backup_db()
 {
@@ -288,9 +290,6 @@ backup_db()
     fi
 }
 
-# Pre-defined backup status
-BACKUP_SUCCESS='YES'
-
 execute_backup() {
     # Date.
     YEAR="$(${CMD_DATE} +%Y)"
@@ -313,8 +312,8 @@ execute_backup() {
     [[ ! -d "${BACKUP_DIR}" ]] && mkdir -p "${BACKUP_DIR}" 2>/dev/null
 
     # Initialize log file.
-    echo "=============================================================================" > "${LOGFILE}"
-    { echo "* Starting backup: ${TIMESTAMP}."; echo "* Backup directory: ${BACKUP_DIR}."; } >> "${LOGFILE}"
+    echo "==========================================================" > "${LOGFILE}"
+    { echo "* Starting backup: ${TIMESTAMP}"; echo "* Backup directory: ${BACKUP_DIR}"; } >> "${LOGFILE}"
 
 
     # Backup.
@@ -335,10 +334,33 @@ execute_backup() {
     done
 
     # Append file size of backup files.
-#    if [[ "$BACKUP_SUCCESS" == 'YES' ]]; then
-        { echo -e "* File size:\n----"; ${CMD_DU} "${BACKUP_DIR}"/*"${TIMESTAMP}"*sql*; echo "----"; } >> "${LOGFILE}"
-#    fi
+    { echo -e "* File size:\n----"; ${CMD_DU} "${BACKUP_DIR}"/*"${TIMESTAMP}"*sql*; echo "----"; } >> "${LOGFILE}"
+
     echo "* Backup completed (Success? ${BACKUP_SUCCESS})." >> "${LOGFILE}"
+}
+
+backup_interval_format_error() {
+    echo "[ERROR] SLEEP_SCHEDULE supports 0 for running the script once and exit (the default value)" 1>&2
+    echo "[ERROR] or a NUMBER for time in seconds or for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively." 1>&2
+    exit 255
+}
+
+send_mail() {
+    cp ${LOGFILE} /tmp/mail_file
+    MAIL_FILE=/tmp/mail_file
+    sed -i '1d;$d' ${MAIL_FILE}
+    sed -i "1s/^/To: ${MAILTO}\n/" ${MAIL_FILE}
+    if [[ -z ${SWARM_SERVICE} ]]; then
+        sed -i "2s/^/Subject: SQL Dump - HOST: ${MYSQL_HOST}\n/" ${MAIL_FILE}
+    else
+        sed -i "2s/^/Subject: SQL Dump - HOST: ${MYSQL_HOST} - SERVICE: ${SWARM_SERVICE}\n/" ${MAIL_FILE}
+    fi
+    sed -i "3s/^/*** Backup completed (Success? ${BACKUP_SUCCESS})\n/" ${MAIL_FILE}
+    sed -i "4s/^/***\n/" ${MAIL_FILE}
+    sed -i "5s/^/-----------DETAILED REPORT-----------\n/" ${MAIL_FILE}
+
+    cat ${MAIL_FILE} | ${CMD_MAIL} -C ${MSMTPRC} -a ${MSMTP_ACCOUNT_NAME} "${MAILTO}"
+    rm -f ${MAIL_FILE}
 }
 
 if [[ ${CRON_SCHEDULE} != '0' ]]; then
@@ -348,19 +370,11 @@ if [[ ${CRON_SCHEDULE} != '0' ]]; then
     fi
     execute_backup
     sed -n '5,$p' "$LOGFILE"
+    if [[ ! -z "${MAILTO}" && -f "${MSMTPRC}" ]]; then
+        send_mail
+    fi
     exit 0
 fi
-
-# From here and down the script is adapted to be used as a standalone using SLEEP
-# and not CRON jobs, as it is suitable for docker usage!
-regex='^[0-9]+[s|m|h|d]{0,1}$'
-regex_unix='^[0-9]+$'
-
-backup_interval_format_error() {
-    echo "[ERROR] SLEEP_SCHEDULE supports 0 for running the script once and exit (the default value)" 1>&2
-    echo "[ERROR] or a NUMBER for time in seconds or for LINUX ONLY: NUMBER[s|m|h|d] for seconds, minutes, hours and days respectively." 1>&2
-    exit 255
-}
 
 if [[ "$SLEEP_SCHEDULE" == '0' ]]; then
     execute_backup
@@ -369,11 +383,14 @@ if [[ "$SLEEP_SCHEDULE" == '0' ]]; then
         echo "Override SLEEP_SCHEDULE environment variable if you want to run non-stop as a daemon" >> ${LOGFILE}
     fi
     sed -n '5,$p' "$LOGFILE"
-elif [[ "$SLEEP_SCHEDULE" =~ $regex ]]; then
-    [[ $(uname -s) != 'Linux' ]] && [[ ! "$SLEEP_SCHEDULE" =~ $regex_unix ]] && backup_interval_format_error
+elif [[ "$SLEEP_SCHEDULE" =~ $sleep_linux_regex ]]; then
+    [[ $(uname -s) != 'Linux' ]] && [[ ! "$SLEEP_SCHEDULE" =~ $sleep_unix_regex ]] && backup_interval_format_error
     while true; do
         execute_backup
         sed -n '5,$p' "$LOGFILE"
+        if [[ ! -z "${MAILTO}" && -f "${MSMTPRC}" ]]; then
+            send_mail
+        fi
         sleep "$SLEEP_SCHEDULE" &
         wait $!
     done
